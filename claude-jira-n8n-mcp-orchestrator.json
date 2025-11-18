@@ -1,0 +1,455 @@
+{
+  "name": "Claude MCP Orchestrator - Jira + n8n",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "claude-mcp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Receive Prompt",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "claude-mcp-webhook"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "user-prompt",
+              "name": "userPrompt",
+              "value": "={{ $json.body.prompt }}",
+              "type": "string"
+            },
+            {
+              "id": "conversation-id",
+              "name": "conversationId",
+              "value": "={{ $json.body.conversationId || 'new' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-input",
+      "name": "Extract Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "4096"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{ role: 'user', content: $json.userPrompt }] }}"
+            },
+            {
+              "name": "tools",
+              "value": "={{ $json.allTools }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-claude-initial",
+      "name": "Call Claude API (Initial)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-tool-calls",
+              "leftValue": "={{ $json.stop_reason }}",
+              "rightValue": "tool_use",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-tool-use",
+      "name": "Check if Tool Use",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract tool calls from Claude response\nconst content = $input.item.json.content;\nconst toolCalls = content.filter(block => block.type === 'tool_use');\n\nreturn toolCalls.map(tool => ({\n  json: {\n    toolId: tool.id,\n    toolName: tool.name,\n    toolInput: tool.input,\n    mcpType: tool.name.startsWith('jira_') ? 'jira' : 'n8n'\n  }\n}));"
+      },
+      "id": "extract-tool-calls",
+      "name": "Extract Tool Calls",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "is-jira-tool",
+              "leftValue": "={{ $json.mcpType }}",
+              "rightValue": "jira",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "route-mcp",
+      "name": "Route to MCP",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.JIRA_MCP_URL }}/tools/{{ $json.toolName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.toolInput }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-jira-mcp",
+      "name": "Call Jira MCP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.N8N_MCP_URL }}/tools/{{ $json.toolName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input",
+              "value": "={{ $json.toolInput }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-n8n-mcp",
+      "name": "Call n8n MCP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combinationMode": "mergeByPosition",
+        "options": {}
+      },
+      "id": "merge-tool-results",
+      "name": "Merge Tool Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format tool results for Claude\nconst allItems = $input.all();\n\nconst toolResults = allItems.map(item => ({\n  type: 'tool_result',\n  tool_use_id: item.json.toolId,\n  content: JSON.stringify(item.json.result || item.json)\n}));\n\nreturn [{ json: { toolResults } }];"
+      },
+      "id": "format-tool-results",
+      "name": "Format Tool Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2050, 200]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "claude-sonnet-4-20250514"
+            },
+            {
+              "name": "max_tokens",
+              "value": "4096"
+            },
+            {
+              "name": "messages",
+              "value": "={{ $json.conversationMessages }}"
+            },
+            {
+              "name": "tools",
+              "value": "={{ $json.allTools }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "call-claude-final",
+      "name": "Call Claude API (Final)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "return-response",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response: $json.content[0].text, conversationId: $json.id } }}",
+        "options": {}
+      },
+      "id": "return-direct-response",
+      "name": "Return Direct Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Define all MCP tools (Jira + n8n)\nconst jiraTools = [\n  {\n    name: 'jira_search_issues',\n    description: 'Search Jira issues using JQL',\n    input_schema: {\n      type: 'object',\n      properties: {\n        jql: { type: 'string', description: 'JQL query string' },\n        maxResults: { type: 'number', description: 'Max results to return' }\n      },\n      required: ['jql']\n    }\n  },\n  {\n    name: 'jira_create_issue',\n    description: 'Create a new Jira issue',\n    input_schema: {\n      type: 'object',\n      properties: {\n        projectKey: { type: 'string' },\n        summary: { type: 'string' },\n        description: { type: 'string' },\n        issueType: { type: 'string' },\n        priority: { type: 'string' }\n      },\n      required: ['projectKey', 'summary', 'issueType']\n    }\n  },\n  {\n    name: 'jira_get_issue',\n    description: 'Get details of a Jira issue',\n    input_schema: {\n      type: 'object',\n      properties: {\n        issueKey: { type: 'string', description: 'Issue key like PROJ-123' }\n      },\n      required: ['issueKey']\n    }\n  },\n  {\n    name: 'jira_add_comment',\n    description: 'Add comment to a Jira issue',\n    input_schema: {\n      type: 'object',\n      properties: {\n        issueKey: { type: 'string' },\n        comment: { type: 'string' }\n      },\n      required: ['issueKey', 'comment']\n    }\n  }\n];\n\nconst n8nTools = [\n  {\n    name: 'n8n_trigger_workflow',\n    description: 'Trigger an n8n workflow',\n    input_schema: {\n      type: 'object',\n      properties: {\n        workflowId: { type: 'string', description: 'Workflow ID or webhook URL' },\n        data: { type: 'object', description: 'Data to send to workflow' }\n      },\n      required: ['workflowId']\n    }\n  },\n  {\n    name: 'n8n_get_workflow_status',\n    description: 'Get execution status of an n8n workflow',\n    input_schema: {\n      type: 'object',\n      properties: {\n        executionId: { type: 'string', description: 'Execution ID' }\n      },\n      required: ['executionId']\n    }\n  },\n  {\n    name: 'n8n_list_workflows',\n    description: 'List all available n8n workflows',\n    input_schema: {\n      type: 'object',\n      properties: {}\n    }\n  }\n];\n\nreturn [{ json: { allTools: [...jiraTools, ...n8nTools] } }];"
+      },
+      "id": "define-tools",
+      "name": "Define MCP Tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Prompt": {
+      "main": [
+        [
+          {
+            "node": "Extract Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Input": {
+      "main": [
+        [
+          {
+            "node": "Define MCP Tools",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define MCP Tools": {
+      "main": [
+        [
+          {
+            "node": "Call Claude API (Initial)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude API (Initial)": {
+      "main": [
+        [
+          {
+            "node": "Check if Tool Use",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Tool Use": {
+      "main": [
+        [
+          {
+            "node": "Extract Tool Calls",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Direct Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Tool Calls": {
+      "main": [
+        [
+          {
+            "node": "Route to MCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route to MCP": {
+      "main": [
+        [
+          {
+            "node": "Call Jira MCP",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call n8n MCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Jira MCP": {
+      "main": [
+        [
+          {
+            "node": "Merge Tool Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call n8n MCP": {
+      "main": [
+        [
+          {
+            "node": "Merge Tool Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Tool Results": {
+      "main": [
+        [
+          {
+            "node": "Format Tool Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Tool Results": {
+      "main": [
+        [
+          {
+            "node": "Call Claude API (Final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude API (Final)": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-17T10:00:00.000Z",
+  "versionId": "1"
+}

@@ -1,0 +1,452 @@
+{
+  "name": "Claude MCP Orchestrator - Jira + n8n",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Fixed code for Initialize Data node\n\nconst data = $input.first().json;\n\n// Jira Trigger sends data in 'issue' object\nconst issue = data.issue || data;\n\nconst ticketData = {\n  ticket_key: issue.key,\n  summary: issue.fields?.summary || '',\n  description: issue.fields?.description || 'No description',\n  project: issue.fields?.project?.key || '',\n  jira_url: issue.self ? issue.self.split('/rest')[0] : '',\n  issue_id: issue.id\n};\n\nconst conversation = [\n  {\n    role: 'user',\n    content: `Analyze this Jira ticket:\n\nKey: ${ticketData.ticket_key}\nSummary: ${ticketData.summary}\nDescription: ${ticketData.description}\nProject: ${ticketData.project}\n\nYOUR TASK:\n1. Search for potential duplicate tickets using search_jira tool\n2. Find similar previously resolved tickets\n3. Provide comprehensive analysis\n\nAvailable tools:\n- search_jira(query): Search for similar tickets\n- get_jira_issue(issue_key): Get full details of a ticket\n\nStart by searching for similar tickets.`\n  }\n];\n\nreturn {\n  json: {\n    ...ticketData,\n    conversation: conversation,\n    iteration: 0,\n    max_iterations: 10\n  }\n};"
+      },
+      "name": "Initialize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        1264
+      ],
+      "id": "b053627a-8f40-4c1b-86c9-aafaffd9b877"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-3.5-sonnet', messages: $json.conversation, tools: [{ type: 'function', function: { name: 'search_jira', description: 'Search Jira', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } }, { type: 'function', function: { name: 'get_jira_issue', description: 'Get issue details', parameters: { type: 'object', properties: { issue_key: { type: 'string' } }, required: ['issue_key'] } } }], max_tokens: 4096 }) }}",
+        "options": {}
+      },
+      "name": "Call Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        96,
+        1264
+      ],
+      "id": "f98e3b00-3b79-4ca9-8fde-507926d8b77f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst message = response.choices[0].message;\nconst prevData = $('Initialize Data').first().json;\nconst conversation = prevData.conversation;\n\nconversation.push({ role: 'assistant', content: message.content, tool_calls: message.tool_calls });\n\nreturn {\n  json: {\n    ...prevData,\n    conversation: conversation,\n    has_tools: !!(message.tool_calls && message.tool_calls.length > 0),\n    tool_calls: message.tool_calls || [],\n    iteration: prevData.iteration + 1,\n    final_text: message.tool_calls ? null : message.content\n  }\n};"
+      },
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        1264
+      ],
+      "id": "bee2d01e-3c1a-45a5-82e2-0c277d4900ae"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.has_tools }}",
+              "value2": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Has Tools?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        528,
+        1264
+      ],
+      "id": "68444de2-1f94-401f-9341-62921c2efad8"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tools = $input.first().json.tool_calls;\nconst data = $input.first().json;\n\nconsole.log('tools---', tools)\nconsole.log('data----', data)\nreturn tools.map(t => ({\n  json: {\n    ...data,\n    tool_id: t.id,\n    tool_name: t.function.name,\n    tool_args: JSON.parse(t.function.arguments)\n  }\n}));"
+      },
+      "name": "Split Tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        1152
+      ],
+      "id": "654cdda0-c303-462c-add1-0805341f8575"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.tool_name }}",
+              "value2": "search_jira"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Which Tool?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        976,
+        1136
+      ],
+      "id": "4ab267f7-4fa5-461c-8458-0cc920d94ee4"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.jira_url }}/rest/api/3/search?jql=project={{ $json.project }} AND summary~{{ $json.tool_args.query }}&maxResults=10&fields=summary,status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Basic YOUR_JIRA_BASE64_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1184,
+        1072
+      ],
+      "id": "b68e5108-23f0-4164-a8f1-b15e8853d4dd"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.jira_url }}/rest/api/3/issue/{{ $json.tool_args.issue_key }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Basic YOUR_JIRA_BASE64_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Get Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1184,
+        1280
+      ],
+      "id": "ea34fc46-845d-4001-90c2-1025d3fea545"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nlet result;\n\nif (data.tool_name === 'search_jira') {\n  result = { found: data.issues ? data.issues.length : 0 };\n} else {\n  result = { key: data.key, summary: data.fields?.summary };\n}\n\nreturn {\n  json: {\n    tool_id: data.tool_id,\n    tool_name: data.tool_name,\n    result: result,\n    original_data: data\n  }\n};"
+      },
+      "name": "Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1408,
+        1184
+      ],
+      "id": "6d44cd98-a413-4b05-b986-9910029727e1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst baseData = $('Parse').first().json;\nconst conv = baseData.conversation;\n\nitems.forEach(item => {\n  conv.push({\n    role: 'tool',\n    tool_call_id: item.json.tool_id,\n    name: item.json.tool_name,\n    content: JSON.stringify(item.json.result)\n  });\n});\n\nreturn { json: { ...baseData, conversation: conv } };"
+      },
+      "name": "Merge",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        1184
+      ],
+      "id": "944bf4ee-390d-4894-a6bc-487b10e467d7"
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  json: {\n    ticket_key: $input.first().json.ticket_key,\n    jira_url: $input.first().json.jira_url,\n    comment: $input.first().json.final_text\n  }\n};"
+      },
+      "name": "Prep Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        1728
+      ],
+      "id": "72c974fc-13e2-4cdb-bce6-b10d7abb6268"
+    },
+    {
+      "parameters": {
+        "events": [
+          "jira:issue_created"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Jira Trigger1",
+      "type": "n8n-nodes-base.jiraTrigger",
+      "typeVersion": 1,
+      "position": [
+        -352,
+        1264
+      ],
+      "id": "5faac769-cc02-4ac8-b3c5-6ed7d9953950",
+      "webhookId": "b7c04377-b78a-4102-bbc6-b6c2b5e45d0e",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "issueKey": "insert-comment",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1072,
+        1728
+      ],
+      "id": "4126f5d9-6532-46ce-8de3-bd543f568c64",
+      "name": "Add a comment",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "path": "d06d1ccf-ac95-4500-833f-b2a02e9bf758"
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        1248
+      ],
+      "id": "2fe8120f-4b71-4845-8d28-f9e403a03f1c",
+      "name": "MCP Server Trigger",
+      "webhookId": "d06d1ccf-ac95-4500-833f-b2a02e9bf758"
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10000",
+          "mode": "list",
+          "cachedResultName": "My Kanban Project"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10002",
+          "mode": "list",
+          "cachedResultName": "Epic"
+        },
+        "summary": "ticket-create",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.jiraTool",
+      "typeVersion": 1,
+      "position": [
+        2240,
+        3088
+      ],
+      "id": "617ddc92-cf50-469d-b65a-e83891205ad8",
+      "name": "Create an issue in Jira Software",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Initialize Data": {
+      "main": [
+        [
+          {
+            "node": "Call Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude": {
+      "main": [
+        [
+          {
+            "node": "Parse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse": {
+      "main": [
+        [
+          {
+            "node": "Has Tools?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Tools?": {
+      "main": [
+        [
+          {
+            "node": "Split Tools",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Tools": {
+      "main": [
+        [
+          {
+            "node": "Which Tool?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which Tool?": {
+      "main": [
+        [
+          {
+            "node": "Search",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search": {
+      "main": [
+        [
+          {
+            "node": "Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issue": {
+      "main": [
+        [
+          {
+            "node": "Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Call Claude",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Comment": {
+      "main": [
+        [
+          {
+            "node": "Add a comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Initialize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6db7a21f-9667-4758-a195-91d125b51132",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "def4945ea2662d5d125fc5c6fdc16387b2a45257c9b2a92539d3841a8d844195"
+  },
+  "id": "9mIMEAVlbIUT3iPW",
+  "tags": []
+}
