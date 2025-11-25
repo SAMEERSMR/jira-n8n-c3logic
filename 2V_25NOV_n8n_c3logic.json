@@ -1,0 +1,698 @@
+{
+  "name": "Claude MCP Orchestrator - 2V_25NOV_c3logic",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst issue = data.issue || data;\nconst fields = issue.fields || {};\n\nconst ticketData = {\n  ticket_key: issue.key,\n  summary: fields.summary || '',\n  description: fields.description || 'No description',\n  project: fields.project?.key || '',\n  jira_url: issue.self ? issue.self.split('/rest')[0] : '',\n  issue_id: issue.id,\n  status: fields.status?.name || '',\n  issue_type: fields.issuetype?.name || '',\n  priority: fields.priority?.name || '',\n  assignee: fields.assignee?.displayName || 'Unassigned',\n  reporter: fields.reporter?.displayName || '',\n  created: fields.created || '',\n  updated: fields.updated || '',\n  labels: fields.labels?.join(', ') || 'None',\n  components: fields.components?.map(c => c.name).join(', ') || 'None',\n  fix_versions: fields.fixVersions?.map(v => v.name).join(', ') || 'None',\n  resolution: fields.resolution?.name || 'Unresolved',\n  due_date: fields.duedate || 'Not set'\n};\n\nconst queryConversation = [\n  {\n    role: 'user',\n    content: `You need to gather all relevant information about this Jira ticket using JQL queries and Jira API calls.\n\n**Ticket Information:**\n- Key: ${ticketData.ticket_key}\n- Summary: ${ticketData.summary}\n- Description: ${ticketData.description}\n- Project: ${ticketData.project}\n- Issue Type: ${ticketData.issue_type}\n- Status: ${ticketData.status}\n- Priority: ${ticketData.priority}\n\n**CRITICAL: PROJECT-SPECIFIC SEARCH REQUIREMENT**\nALL JQL queries MUST include: project = ${ticketData.project}\nThis ensures you only search within the ${ticketData.project} project. NEVER search across all projects.\n\n**JQL Query Examples:**\n- CORRECT: \"project = ${ticketData.project} AND text ~ 'login error' AND status = Resolved\"\n- CORRECT: \"project = ${ticketData.project} AND summary ~ 'authentication' ORDER BY created DESC\"\n- WRONG: \"text ~ 'login error'\" (missing project filter)\n- WRONG: \"summary ~ 'bug' AND status = Resolved\" (missing project filter)\n\n**YOUR TASK (Query Phase):**\n\n**IMPORTANT - SELECTIVE TOOL CALLING STRATEGY:**\nTo optimize performance and reduce unnecessary API calls, only call tools that are REQUIRED or meet specific conditions. Analyze the ticket carefully and return only the necessary tool calls in your FIRST response. The system will execute all tool calls in parallel.\n\n**REQUIRED TOOLS (Always Call):**\n1. **search_jira** - MANDATORY: Call 2-4 times with different JQL queries to find similar tickets:\n   - Search by key terms from summary (e.g., error keywords, feature names)\n   - Search by key terms from description\n   - Search for resolved tickets with similar characteristics\n   - Search for recent tickets of the same issue type\n   - Each search MUST include: project = ${ticketData.project}\n\n**CONDITIONAL TOOLS (Only Call If Conditions Met):**\n\n2. **get_jira_issue** - Call ONLY IF:\n   - search_jira found specific similar tickets (with ticket keys)\n   - You need full details about those specific tickets\n\n3. **get_jira_comments** - Call ONLY IF:\n   - search_jira found similar RESOLVED tickets\n   - Those tickets likely contain solution discussions in comments\n   - DO NOT call for unresolved tickets unless they show active discussion\n\n4. **get_jira_changelog** - Call ONLY IF:\n   - search_jira found resolved tickets with clear status transitions\n   - You need to understand the resolution workflow/pattern\n   - Multiple similar tickets were resolved (indicates a pattern)\n\n5. **get_jira_attachments** - Call ONLY IF:\n   - Ticket summary/description mentions files, screenshots, logs, or images\n   - Similar tickets are known to have relevant attachments\n   - DO NOT call speculatively\n\n**Decision Logic:**\n- If search_jira returns 0 results \u2192 Do NOT call other tools, move to analysis\n- If search_jira finds only unresolved tickets \u2192 Skip get_jira_changelog\n- If ticket has no file-related keywords \u2192 Skip get_jira_attachments\n- Only call tools that will provide actionable information\n\n**Strategy Tips:**\n- Start with REQUIRED tools only (2-4 search_jira queries)\n- Evaluate search results before calling CONDITIONAL tools\n- You have ONE follow-up opportunity if initial results reveal more tickets to investigate\n- Prioritize quality over quantity - fewer targeted calls are better than many irrelevant calls\n\n**Example First Response Pattern:**\n\u2705 GOOD (Minimal but sufficient):\n- 3 search_jira calls with varied JQL queries\n- 2 get_jira_comments calls only for resolved similar tickets found\n\n\u274c BAD (Too many unnecessary calls):\n- 5 search_jira calls + get_jira_issue for all + get_jira_comments for all + get_jira_changelog for all + get_jira_attachments\n\nREMEMBER: Every search_jira call MUST start with \"project = ${ticketData.project} AND ...\"\n\nTicket Key: ${ticketData.ticket_key}\nProject: ${ticketData.project}`\n  }\n];\n\nreturn {\n  json: {\n    ...ticketData,\n    query_conversation: queryConversation,\n    iteration: 0,\n    max_iterations: 3,\n    phase: 'query'\n  }\n};"
+      },
+      "name": "Initialize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2528,
+        600
+      ],
+      "id": "90b447f9-90bb-49bd-8161-dbbda0dc70a2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-3.5-sonnet', messages: $json.query_conversation, tools: [{ type: 'function', function: { name: 'search_jira', description: 'Search for Jira issues using JQL query', parameters: { type: 'object', properties: { query: { type: 'string', description: 'JQL query string' } }, required: ['query'] } } }, { type: 'function', function: { name: 'get_jira_issue', description: 'Get full details of a specific Jira issue', parameters: { type: 'object', properties: { issue_key: { type: 'string', description: 'Jira issue key (e.g., PROJ-123)' } }, required: ['issue_key'] } } }, { type: 'function', function: { name: 'get_jira_comments', description: 'Get all comments for a Jira issue', parameters: { type: 'object', properties: { issue_key: { type: 'string', description: 'Jira issue key' } }, required: ['issue_key'] } } }, { type: 'function', function: { name: 'get_jira_changelog', description: 'Get changelog/history for a Jira issue', parameters: { type: 'object', properties: { issue_key: { type: 'string', description: 'Jira issue key' } }, required: ['issue_key'] } } }, { type: 'function', function: { name: 'get_jira_attachments', description: 'Get all attachments for a Jira issue', parameters: { type: 'object', properties: { issue_key: { type: 'string', description: 'Jira issue key' } }, required: ['issue_key'] } } } ], max_tokens: 4096 }) }}",
+        "options": {}
+      },
+      "name": "Call Claude (Query)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -2304,
+        600
+      ],
+      "id": "query-claude-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst message = response.choices[0].message;\n\nlet prevData;\ntry {\n  prevData = $(\"Merge Query Results\").first().json;\n} catch (error) {\n  prevData = $('Initialize Data').first().json;\n}\n\nconst conversation = prevData.query_conversation || [];\n\nconst assistantMsg = {\n  role: 'assistant',\n  content: message.content || null,\n  tool_calls: message.tool_calls || []\n};\n\nif (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0) {\n  assistantMsg.content = null;\n}\n\nconversation.push(assistantMsg);\n\nconst toolCallsCount = (message.tool_calls || []).length;\nconsole.log(`Parse Query Response - Iteration ${prevData.iteration + 1}: Received ${toolCallsCount} tool calls`);\n\nif (toolCallsCount === 0) {\n  console.log('No tool calls - moving to Analysis Phase');\n}\n\nreturn {\n  json: {\n    ...prevData,\n    query_conversation: conversation,\n    has_tools: !!(message.tool_calls && message.tool_calls.length > 0),\n    tool_calls: message.tool_calls || [],\n    iteration: (prevData.iteration || 0) + 1,\n    query_complete: !(message.tool_calls && message.tool_calls.length > 0)\n  }\n};"
+      },
+      "name": "Parse Query Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2080,
+        400
+      ],
+      "id": "parse-query-response"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-tools-check",
+              "leftValue": "={{ $json.has_tools }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "iteration-limit-check",
+              "leftValue": "={{ $json.iteration }}",
+              "rightValue": "={{ $json.max_iterations }}",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Has More Queries?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1856,
+        400
+      ],
+      "id": "has-more-queries"
+    },
+    {
+      "parameters": {
+        "jsCode": "const tools = $input.first().json.tool_calls || [];\nconst data = $input.first().json;\n\nif (!Array.isArray(tools) || tools.length === 0) {\n  throw new Error('No tool_calls found in response');\n}\n\nconsole.log(`Split Query Tools - Processing ${tools.length} tool calls in parallel`);\n\nreturn tools.map((t, index) => {\n  if (!t.id) {\n    throw new Error(`Tool call ${index} missing id: ${JSON.stringify(t)}`);\n  }\n  if (!t.function || !t.function.name) {\n    throw new Error(`Tool call ${index} missing function name: ${JSON.stringify(t)}`);\n  }\n  \n  const toolArgs = typeof t.function.arguments === 'string' ? JSON.parse(t.function.arguments) : (t.function.arguments || {});\n  \n  console.log(`  - Tool ${index + 1}: ${t.function.name} (ID: ${t.id})`);\n  \n  return {\n    json: {\n      ...data,\n      tool_id: t.id,\n      tool_name: t.function.name,\n      tool_args: toolArgs,\n      tool_index: index\n    }\n  };\n});"
+      },
+      "name": "Split Query Tools",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1632,
+        240
+      ],
+      "id": "split-query-tools"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.tool_name }}",
+                    "operation": "equals",
+                    "value2": "search_jira"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "search_jira"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.tool_name }}",
+                    "operation": "equals",
+                    "value2": "get_jira_issue"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "get_jira_issue"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.tool_name }}",
+                    "operation": "equals",
+                    "value2": "get_jira_comments"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "get_jira_comments"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.tool_name }}",
+                    "operation": "equals",
+                    "value2": "get_jira_changelog"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "get_jira_changelog"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.tool_name }}",
+                    "operation": "equals",
+                    "value2": "get_jira_attachments"
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "get_jira_attachments"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "fallback"
+        }
+      },
+      "name": "Which Query Tool?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -1408,
+        128
+      ],
+      "id": "which-query-tool"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "options": {
+          "jql": "={{ $json.tool_args.query }}"
+        }
+      },
+      "name": "Search Jira",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -432
+      ],
+      "id": "62d336b5-175c-46ac-84aa-24a70e48a023",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "issueKey": "={{ $json.tool_args.issue_key }}",
+        "additionalFields": {}
+      },
+      "name": "Get Issue",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -240
+      ],
+      "id": "dc9448c0-10a3-41ab-a518-61ca2b79b14e",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "operation": "getAll",
+        "issueKey": "={{ $json.tool_args.issue_key }}",
+        "options": {}
+      },
+      "name": "Get Comments",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        -48
+      ],
+      "id": "093ff6d2-d3de-4e93-bff2-2464aa2e2898",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "issueKey": "={{ $json.tool_args.issue_key }}",
+        "additionalFields": {}
+      },
+      "name": "Get Changelog",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        144
+      ],
+      "id": "d561ffbb-4263-400c-9a3c-6d2200eb4808",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "issueAttachment",
+        "operation": "getAll",
+        "issueKey": "={{ $json.tool_args.issue_key }}"
+      },
+      "name": "Get Attachments",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        336
+      ],
+      "id": "22903fbc-5de7-468a-9da9-82398cad52c5",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jiraResponse = $input.item.json;\nconst executionTimestamp = new Date().toISOString();\n\nconst splitToolsItems = $(\"Split Query Tools\").all();\nconst allInputItems = $input.all();\nconst currentIndex = allInputItems.findIndex(item => JSON.stringify(item.json) === JSON.stringify(jiraResponse));\n\nlet originalData;\nlet matchMethod = 'unknown';\n\n// Try index matching first\nif (currentIndex >= 0 && currentIndex < splitToolsItems.length) {\n  originalData = splitToolsItems[currentIndex].json;\n  matchMethod = 'index';\n} else {\n  // Fallback to issue key matching\n  const jiraKey = jiraResponse.key || jiraResponse.issues?.[0]?.key;\n  if (jiraKey) {\n    const matched = splitToolsItems.find(item => {\n      const issueKey = item.json.tool_args?.issue_key;\n      return issueKey && jiraKey && jiraKey.includes(issueKey);\n    });\n    if (matched) {\n      originalData = matched.json;\n      matchMethod = 'issue_key';\n    }\n  }\n  \n  // Last resort: use tool_index if available\n  if (!originalData) {\n    const toolIndex = jiraResponse.tool_index;\n    if (typeof toolIndex === 'number' && toolIndex < splitToolsItems.length) {\n      originalData = splitToolsItems[toolIndex].json;\n      matchMethod = 'tool_index';\n    } else {\n      originalData = splitToolsItems[0]?.json;\n      matchMethod = 'fallback_first';\n    }\n  }\n}\n\nconst toolId = originalData?.tool_id;\nconst toolName = originalData?.tool_name;\nconst toolArgs = originalData?.tool_args;\n\nif (!toolId) {\n  throw new Error(`Format Query Results - Missing tool_id. Match method: ${matchMethod}, Current index: ${currentIndex}, Total split items: ${splitToolsItems.length}`);\n}\n\nconsole.log(`Format Query Results - Tool: ${toolName}, ID: ${toolId}, Match: ${matchMethod}`);\n\nconst toolResultMap = {\n  'search_jira': () => ({\n    found: jiraResponse.issues ? jiraResponse.issues.length : 0,\n    issues: jiraResponse.issues || []\n  }),\n  'get_jira_issue': () => ({\n    key: jiraResponse.key,\n    summary: jiraResponse.fields?.summary,\n    description: jiraResponse.fields?.description,\n    status: jiraResponse.fields?.status?.name,\n    fields: jiraResponse.fields\n  }),\n  'get_jira_comments': () => ({\n    total: jiraResponse.total || (Array.isArray(jiraResponse) ? jiraResponse.length : 0),\n    comments: Array.isArray(jiraResponse) ? jiraResponse : (jiraResponse.comments || [])\n  }),\n  'get_jira_changelog': () => ({\n    total: jiraResponse.changelog?.histories?.length || 0,\n    histories: jiraResponse.changelog?.histories || []\n  }),\n  'get_jira_attachments': () => ({\n    attachments: jiraResponse.fields?.attachment || jiraResponse.attachment || []\n  })\n};\n\nconst result = toolResultMap[toolName] ? toolResultMap[toolName]() : jiraResponse;\n\nreturn {\n  json: {\n    tool_id: toolId,\n    tool_name: toolName,\n    tool_args: toolArgs,\n    result: result,\n    _meta: {\n      match_method: matchMethod,\n      execution_timestamp: executionTimestamp\n    }\n  }\n};"
+      },
+      "name": "Format Query Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -960,
+        88
+      ],
+      "id": "format-query-results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst baseData = $('Parse Query Response').first().json;\nconst conv = baseData.query_conversation;\n\nconsole.log(`Merge Query Results - Merging ${items.length} tool results into conversation`);\n\nitems.forEach((item, index) => {\n  const toolResult = {\n    role: 'tool',\n    tool_call_id: item.json.tool_id,\n    content: typeof item.json.result === 'string' ? item.json.result : JSON.stringify(item.json.result)\n  };\n  \n  if (!toolResult.tool_call_id) {\n    throw new Error(`Merge Query Results - Missing tool_call_id for tool ${index + 1}: ${item.json.tool_name}`);\n  }\n  \n  console.log(`  - Added result for ${item.json.tool_name} (ID: ${toolResult.tool_call_id})`);\n  conv.push(toolResult);\n});\n\nconsole.log(`Conversation now has ${conv.length} messages`);\n\nreturn { json: { ...baseData, query_conversation: conv } };"
+      },
+      "name": "Merge Query Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -736,
+        400
+      ],
+      "id": "merge-query-results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const queryData = $input.first().json;\nconst ticketData = $('Initialize Data').first().json;\n\nconsole.log(`Prepare Analysis Data - Transitioning to Analysis Phase after ${queryData.iteration} iterations`);\n\nconst analysisConversation = [\n  {\n    role: 'user',\n    content: `Based on the following ticket and all the gathered query results, analyze and create a comprehensive summary:\n\n**Original Ticket:**\n- Key: ${ticketData.ticket_key}\n- Summary: ${ticketData.summary}\n- Description: ${ticketData.description}\n- Project: ${ticketData.project}\n- Issue Type: ${ticketData.issue_type}\n- Status: ${ticketData.status}\n- Priority: ${ticketData.priority}\n- Assignee: ${ticketData.assignee}\n- Reporter: ${ticketData.reporter}\n- Created: ${ticketData.created}\n- Updated: ${ticketData.updated}\n\n**Gathered Data:**\nThe conversation below contains all Jira queries performed and their results:\n\n${JSON.stringify(queryData.query_conversation, null, 2)}\n\n**YOUR TASK (Analysis Phase):**\nAnalyze all the gathered information and create a comprehensive summary that includes:\n\n1. **Ticket Overview**: Brief summary of the ticket\n2. **Similar Tickets Found**: List similar/related tickets with links\n3. **Solutions Extracted**: Key solutions and fixes found from similar ticket comments\n4. **Resolution Patterns**: Patterns identified from changelogs of resolved tickets\n5. **Key Insights**: Important insights and recommendations\n6. **Suggested Next Steps**: Actionable next steps for resolving this ticket\n\nFormat the summary clearly with sections and use markdown. Do NOT use any tools - this is pure analysis based on the data already gathered.\n\nThe final summary should be ready to post as a comment on ticket ${ticketData.ticket_key}.`\n  }\n];\n\nreturn {\n  json: {\n    ...ticketData,\n    ...queryData,\n    analysis_conversation: analysisConversation,\n    phase: 'analysis'\n  }\n};"
+      },
+      "name": "Prepare Analysis Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -512,
+        600
+      ],
+      "id": "prepare-analysis-data"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendQuery": false,
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-3.5-sonnet', messages: $json.analysis_conversation, max_tokens: 4096 }) }}",
+        "options": {}
+      },
+      "name": "Call Claude (Analyze)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -288,
+        600
+      ],
+      "id": "analyze-claude-node"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst message = response.choices[0].message;\nconst prevData = $('Prepare Analysis Data').first().json;\n\nconsole.log('Parse Analysis - Analysis complete, summary generated');\n\nreturn {\n  json: {\n    ...prevData,\n    final_summary: message.content,\n    analysis_complete: true\n  }\n};"
+      },
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        400
+      ],
+      "id": "parse-analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconsole.log(`Prep Comment - Preparing to post summary to ticket ${data.ticket_key}`);\n\nreturn {\n  json: {\n    ticket_key: data.ticket_key,\n    jira_url: data.jira_url,\n    comment: data.final_summary\n  }\n};"
+      },
+      "name": "Prep Comment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        400
+      ],
+      "id": "prep-comment"
+    },
+    {
+      "parameters": {
+        "resource": "issueComment",
+        "issueKey": "={{ $json.ticket_key }}",
+        "comment": "={{ $json.comment }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        384,
+        400
+      ],
+      "id": "add-comment-node",
+      "name": "Add Comment to Jira",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "events": [
+          "jira:issue_created"
+        ],
+        "additionalFields": {}
+      },
+      "name": "Jira Trigger",
+      "type": "n8n-nodes-base.jiraTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2752,
+        600
+      ],
+      "id": "jira-trigger-node",
+      "webhookId": "b7c04377-b78a-4102-bbc6-b6c2b5e45d0e",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "99gBxsp9iKzmG75q",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Initialize Data": {
+      "main": [
+        [
+          {
+            "node": "Call Claude (Query)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude (Query)": {
+      "main": [
+        [
+          {
+            "node": "Parse Query Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Query Response": {
+      "main": [
+        [
+          {
+            "node": "Has More Queries?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has More Queries?": {
+      "main": [
+        [
+          {
+            "node": "Split Query Tools",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Analysis Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Query Tools": {
+      "main": [
+        [
+          {
+            "node": "Which Query Tool?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Which Query Tool?": {
+      "main": [
+        [
+          {
+            "node": "Search Jira",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Issue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Comments",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Changelog",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Attachments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Jira": {
+      "main": [
+        [
+          {
+            "node": "Format Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Issue": {
+      "main": [
+        [
+          {
+            "node": "Format Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Comments": {
+      "main": [
+        [
+          {
+            "node": "Format Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Changelog": {
+      "main": [
+        [
+          {
+            "node": "Format Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Attachments": {
+      "main": [
+        [
+          {
+            "node": "Format Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Query Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Query Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Query Results": {
+      "main": [
+        [
+          {
+            "node": "Call Claude (Query)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analysis Data": {
+      "main": [
+        [
+          {
+            "node": "Call Claude (Analyze)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude (Analyze)": {
+      "main": [
+        [
+          {
+            "node": "Parse Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Analysis": {
+      "main": [
+        [
+          {
+            "node": "Prep Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Comment": {
+      "main": [
+        [
+          {
+            "node": "Add Comment to Jira",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Trigger": {
+      "main": [
+        [
+          {
+            "node": "Initialize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2v25nov-c3logic-001",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "def4945ea2662d5d125fc5c6fdc16387b2a45257c9b2a92539d3841a8d844195"
+  },
+  "id": "2v25nov-c3logic",
+  "tags": []
+}

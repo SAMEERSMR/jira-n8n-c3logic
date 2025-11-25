@@ -1,0 +1,31 @@
+[
+    {
+        "ticket_key": "KAN-853",
+        "summary": "landing page create",
+        "description": "No description",
+        "project": "KAN",
+        "jira_url": "https://sameermathan6.atlassian.net",
+        "issue_id": "14265",
+        "status": "To Do",
+        "issue_type": "Task",
+        "priority": "Medium",
+        "assignee": "Unassigned",
+        "reporter": "Sameer M",
+        "created": "2025-11-25T14:18:25.517+0530",
+        "updated": "2025-11-25T14:18:25.517+0530",
+        "labels": "None",
+        "components": "None",
+        "fix_versions": "None",
+        "resolution": "Unresolved",
+        "due_date": "Not set",
+        "query_conversation": [
+            {
+                "role": "user",
+                "content": "You need to gather all relevant information about this Jira ticket using JQL queries and Jira API calls.\n\n**Ticket Information:**\n- Key: KAN-853\n- Summary: landing page create\n- Description: No description\n- Project: KAN\n- Issue Type: Task\n- Status: To Do\n- Priority: Medium\n\n**CRITICAL: PROJECT-SPECIFIC SEARCH REQUIREMENT**\nALL JQL queries MUST include: project = KAN\nThis ensures you only search within the KAN project. NEVER search across all projects.\n\n**JQL Query Examples:**\n- CORRECT: \"project = KAN AND text ~ 'login error' AND status = Resolved\"\n- CORRECT: \"project = KAN AND summary ~ 'authentication' ORDER BY created DESC\"\n- WRONG: \"text ~ 'login error'\" (missing project filter)\n- WRONG: \"summary ~ 'bug' AND status = Resolved\" (missing project filter)\n\n**YOUR TASK (Query Phase):**\n\n**IMPORTANT - SELECTIVE TOOL CALLING STRATEGY:**\nTo optimize performance and reduce unnecessary API calls, only call tools that are REQUIRED or meet specific conditions. Analyze the ticket carefully and return only the necessary tool calls in your FIRST response. The system will execute all tool calls in parallel.\n\n**REQUIRED TOOLS (Always Call):**\n1. **search_jira** - MANDATORY: Call 2-4 times with different JQL queries to find similar tickets:\n   - Search by key terms from summary (e.g., error keywords, feature names)\n   - Search by key terms from description\n   - Search for resolved tickets with similar characteristics\n   - Search for recent tickets of the same issue type\n   - Each search MUST include: project = KAN\n\n**CONDITIONAL TOOLS (Only Call If Conditions Met):**\n\n2. **get_jira_issue** - Call ONLY IF:\n   - search_jira found specific similar tickets (with ticket keys)\n   - You need full details about those specific tickets\n\n3. **get_jira_comments** - Call ONLY IF:\n   - search_jira found similar RESOLVED tickets\n   - Those tickets likely contain solution discussions in comments\n   - DO NOT call for unresolved tickets unless they show active discussion\n\n4. **get_jira_changelog** - Call ONLY IF:\n   - search_jira found resolved tickets with clear status transitions\n   - You need to understand the resolution workflow/pattern\n   - Multiple similar tickets were resolved (indicates a pattern)\n\n5. **get_jira_attachments** - Call ONLY IF:\n   - Ticket summary/description mentions files, screenshots, logs, or images\n   - Similar tickets are known to have relevant attachments\n   - DO NOT call speculatively\n\n**Decision Logic:**\n- If search_jira returns 0 results → Do NOT call other tools, move to analysis\n- If search_jira finds only unresolved tickets → Skip get_jira_changelog\n- If ticket has no file-related keywords → Skip get_jira_attachments\n- Only call tools that will provide actionable information\n\n**Strategy Tips:**\n- Start with REQUIRED tools only (2-4 search_jira queries)\n- Evaluate search results before calling CONDITIONAL tools\n- You have ONE follow-up opportunity if initial results reveal more tickets to investigate\n- Prioritize quality over quantity - fewer targeted calls are better than many irrelevant calls\n\n**Example First Response Pattern:**\n✅ GOOD (Minimal but sufficient):\n- 3 search_jira calls with varied JQL queries\n- 2 get_jira_comments calls only for resolved similar tickets found\n\n❌ BAD (Too many unnecessary calls):\n- 5 search_jira calls + get_jira_issue for all + get_jira_comments for all + get_jira_changelog for all + get_jira_attachments\n\nREMEMBER: Every search_jira call MUST start with \"project = KAN AND ...\"\n\nTicket Key: KAN-853\nProject: KAN"
+            }
+        ],
+        "iteration": 0,
+        "max_iterations": 3,
+        "phase": "query"
+    }
+]
