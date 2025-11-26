@@ -1,5 +1,5 @@
 {
-  "name": "Claude MCP Orchestrator - 2V_25NOV_c3logic",
+  "name": "Claude MCP Orchestrator - 3V_25NOV_code_routing",
   "nodes": [
     {
       "parameters": {
@@ -113,90 +113,6 @@
         240
       ],
       "id": "split-query-tools"
-    },
-    {
-      "parameters": {
-        "rules": {
-          "values": [
-            {
-              "conditions": {
-                "string": [
-                  {
-                    "value1": "={{ $json.tool_name }}",
-                    "operation": "equals",
-                    "value2": "search_jira"
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "search_jira"
-            },
-            {
-              "conditions": {
-                "string": [
-                  {
-                    "value1": "={{ $json.tool_name }}",
-                    "operation": "equals",
-                    "value2": "get_jira_issue"
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "get_jira_issue"
-            },
-            {
-              "conditions": {
-                "string": [
-                  {
-                    "value1": "={{ $json.tool_name }}",
-                    "operation": "equals",
-                    "value2": "get_jira_comments"
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "get_jira_comments"
-            },
-            {
-              "conditions": {
-                "string": [
-                  {
-                    "value1": "={{ $json.tool_name }}",
-                    "operation": "equals",
-                    "value2": "get_jira_changelog"
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "get_jira_changelog"
-            },
-            {
-              "conditions": {
-                "string": [
-                  {
-                    "value1": "={{ $json.tool_name }}",
-                    "operation": "equals",
-                    "value2": "get_jira_attachments"
-                  }
-                ]
-              },
-              "renameOutput": true,
-              "outputKey": "get_jira_attachments"
-            }
-          ]
-        },
-        "options": {
-          "fallbackOutput": "fallback"
-        }
-      },
-      "name": "Which Query Tool?",
-      "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
-      "position": [
-        -1408,
-        128
-      ],
-      "id": "which-query-tool"
     },
     {
       "parameters": {
@@ -446,6 +362,19 @@
           "name": "Jira SW Cloud account"
         }
       }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconsole.log(`=== Which Query Tool (Code Router) ===`);\nconsole.log(`Total items received: ${items.length}`);\n\n// Initialize output arrays (5 outputs matching 5 tool types)\nconst search_jira = [];\nconst get_jira_issue = [];\nconst get_jira_comments = [];\nconst get_jira_changelog = [];\nconst get_jira_attachments = [];\n\n// Route each item to correct output based on tool_name\nitems.forEach((item, index) => {\n  const toolName = item.json.tool_name;\n  console.log(`Item ${index}: tool_name=\"${toolName}\", tool_id=\"${item.json.tool_id}\"`);\n\n  switch(toolName) {\n    case 'search_jira':\n      search_jira.push(item);\n      console.log(`  \u2192 Routed to Output 0 (search_jira)`);\n      break;\n    case 'get_jira_issue':\n      get_jira_issue.push(item);\n      console.log(`  \u2192 Routed to Output 1 (get_jira_issue)`);\n      break;\n    case 'get_jira_comments':\n      get_jira_comments.push(item);\n      console.log(`  \u2192 Routed to Output 2 (get_jira_comments)`);\n      break;\n    case 'get_jira_changelog':\n      get_jira_changelog.push(item);\n      console.log(`  \u2192 Routed to Output 3 (get_jira_changelog)`);\n      break;\n    case 'get_jira_attachments':\n      get_jira_attachments.push(item);\n      console.log(`  \u2192 Routed to Output 4 (get_jira_attachments)`);\n      break;\n    default:\n      console.error(`  \u2717 ERROR: Unknown tool_name: \"${toolName}\"`);\n  }\n});\n\nconsole.log(`\\nOutput Summary:`);\nconsole.log(`  Output 0 (search_jira): ${search_jira.length} items`);\nconsole.log(`  Output 1 (get_jira_issue): ${get_jira_issue.length} items`);\nconsole.log(`  Output 2 (get_jira_comments): ${get_jira_comments.length} items`);\nconsole.log(`  Output 3 (get_jira_changelog): ${get_jira_changelog.length} items`);\nconsole.log(`  Output 4 (get_jira_attachments): ${get_jira_attachments.length} items`);\n\n// Return 5 outputs (n8n expects array of arrays for multiple outputs)\nreturn [\n  search_jira,\n  get_jira_issue,\n  get_jira_comments,\n  get_jira_changelog,\n  get_jira_attachments\n];"
+      },
+      "name": "Which Query Tool?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1408,
+        128
+      ],
+      "id": "which-query-tool"
     }
   ],
   "pinData": {},
@@ -688,11 +617,11 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "2v25nov-c3logic-001",
+  "versionId": "3v25nov-code-routing-001",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "def4945ea2662d5d125fc5c6fdc16387b2a45257c9b2a92539d3841a8d844195"
   },
-  "id": "2v25nov-c3logic",
+  "id": "3v25nov-code-routing",
   "tags": []
 }
